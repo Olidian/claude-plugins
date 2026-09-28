@@ -1,0 +1,25 @@
+{
+  "name": "pod",
+  "version": "1.0.0",
+  "description": "Put what you build online on your Pod instance: deploy a folder, follow the build, read logs, set environment variables, add a database or a domain.",
+  "author": { "name": "Olidian", "url": "https://github.com/Olidian" },
+  "homepage": "https://github.com/Olidian/claude-plugins",
+  "repository": "https://github.com/Olidian/claude-plugins",
+  "license": "MIT",
+  "keywords": ["deploy", "hosting", "paas", "docker", "pod"],
+  "userConfig": {
+    "pod_url": {
+      "type": "string",
+      "title": "Pod address",
+      "description": "The address of your Pod instance, without a trailing slash, e.g. https://pod.example.com",
+      "required": true,
+      "sensitive": false
+    }
+  },
+  "mcpServers": {
+    "pod": {
+      "type": "http",
+      "url": "${user_config.pod_url}/api/v1/mcp"
+    }
+  }
+}

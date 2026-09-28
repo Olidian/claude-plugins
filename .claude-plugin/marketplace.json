@@ -1,0 +1,15 @@
+{
+  "name": "olidian",
+  "owner": { "name": "Olidian", "url": "https://github.com/Olidian" },
+  "description": "Olidian's plugins for Claude Code",
+  "plugins": [
+    {
+      "name": "pod",
+      "source": "./plugins/pod",
+      "description": "Put what you build online on your Pod instance: deploy a folder, follow the build, read logs, set environment variables, add a database or a domain.",
+      "version": "1.0.0",
+      "category": "deployment",
+      "keywords": ["deploy", "hosting", "paas", "docker", "pod"]
+    }
+  ]
+}
