@@ -1,7 +1,7 @@
 {
   "name": "pod",
-  "version": "1.0.0",
-  "description": "Put what you build online on your Pod instance: deploy a folder, follow the build, read logs, set environment variables, add a database or a domain.",
+  "version": "1.1.0",
+  "description": "Put what you build online on your Pod instance: deploy a ready-made image or a folder, follow the build, read logs, set environment variables, add a database or a domain.",
   "author": { "name": "Olidian", "url": "https://github.com/Olidian" },
   "homepage": "https://github.com/Olidian/claude-plugins",
   "repository": "https://github.com/Olidian/claude-plugins",
