@@ -3,7 +3,7 @@
 ## pod
 
 Put what you build with Claude Code online on your [Pod](https://github.com/Olidian) instance,
-in one sentence: "put this folder online".
+in one sentence: "put this online".
 
 ```
 /plugin marketplace add Olidian/claude-plugins
@@ -16,19 +16,17 @@ access (deploy, or read only). Then ask Claude to deploy.
 
 What the plugin brings:
 
-- **Pod's MCP server** (`<your Pod>/api/v1/mcp`): deploy a ready-made image or a folder, follow
-  the build, read logs, set environment variables, add a database or a domain, roll back, delete
-  an app.
+- **Pod's MCP server** (`<your Pod>/api/v1/mcp`): deploy a ready-made image, follow
+  deployments, read logs, set environment variables, add a database or a domain, roll back,
+  delete an app.
 - **The `deploy-to-pod` skill**: the flow. Claude first looks for a ready-made image (Docker Hub
-  first: official images, then verified publishers) and sends the folder only as a last resort,
-  when no image runs the code; it then writes a Dockerfile if the project has none, following
-  Pod's guide.
-- **A hook** that lets the one command Pod gives to send the folder (`git ls-files | tar | curl`
-  to a single-use upload URL of your instance) run without a permission prompt. Any other
-  command follows your usual permission rules. It needs `python3`; without it, you are asked
-  as usual.
+  first: official images, then verified publishers). When no image runs your own code, Pod
+  builds it from a Git repository: Claude writes the Dockerfile if the project has none,
+  following Pod's guide, pushes it with your go-ahead, and tells you how to link the repository
+  in Pod's interface. Pod no longer receives folders sent from your machine.
 
-Your Pod instance must run Pod 0.10 or later (0.18 or later to deploy images). Without the plugin, the MCP server alone works too:
+Your Pod instance must run Pod 0.18 or later. Version 2.0.0 of the plugin no longer sends
+folders and has no hook: use 1.1.0 with a Pod that still accepts them. Without the plugin, the MCP server alone works too:
 
 ```
 claude mcp add --transport http pod https://pod.example.com/api/v1/mcp
@@ -37,6 +35,5 @@ claude mcp add --transport http pod https://pod.example.com/api/v1/mcp
 ## Development
 
 ```
-python3 -m unittest discover -s tests
 claude plugin validate plugins/pod
 ```
