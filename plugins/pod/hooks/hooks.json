@@ -1,0 +1,12 @@
+{
+  "description": "pod: puts bin/ (podctx) on the PATH of the session's shell. Adds no context.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          { "type": "command", "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session_start.sh\"", "timeout": 10 }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,221 @@
+#!/usr/bin/env bash
+# podctx: run the pod CLI, or call Pod's HTTP API, against a named Pod instance.
+#
+# Instances are described in ${POD_INSTANCES_FILE:-~/.config/pod/instances}:
+#
+#   [acme]
+#   url   = https://pod.acme.example
+#   key   = op://Vault/Pod acme/credential     # or env:VAR, or keychain:SERVICE (macOS)
+#   image = registry.acme.example/pod:0.26.1   # optional: run the CLI from this image
+#
+# The API key is read at the last moment and handed to the CLI through its environment
+# (POD_API_KEY) or to curl through a file descriptor: it never appears in an argument or
+# in the output. A key written in clear in the file is refused.
+#
+# Usage:
+#   podctx instances                        list the instances (name, url, key source kind)
+#   podctx INSTANCE check                   server version and the key's identity
+#   podctx INSTANCE [--] POD_ARGS...        run `pod POD_ARGS...` with POD_URL/POD_API_KEY set
+#   podctx INSTANCE api METHOD PATH [FILE]  call /api/v1/... (JSON body from FILE, - for stdin)
+#   podctx here                             the instance and service bound in .pod/app.json
+#
+# INSTANCE "." means the instance named in the nearest .pod/app.json; its "service" then
+# becomes POD_SERVICE unless POD_SERVICE is already set.
+#
+# Exit status: the CLI's own (0, 1, 2), 1 for an API error, 2 for a usage error,
+# 3 when the instance, its key or the CLI cannot be found.
+set -euo pipefail
+
+prog=podctx
+config="${POD_INSTANCES_FILE:-${XDG_CONFIG_HOME:-$HOME/.config}/pod/instances}"
+
+die() { echo "$prog: $2" >&2; exit "$1"; }
+
+usage() {
+  sed -n '/^# Usage:/,/^# Exit status/p' "$0" | sed 's/^# \{0,1\}//' >&2
+  exit 2
+}
+
+trim() { local s="$1"; s="${s#"${s%%[![:space:]]*}"}"; s="${s%"${s##*[![:space:]]}"}"; printf '%s' "$s"; }
+
+# Prints "name" for every section of the config file.
+list_names() {
+  [ -f "$config" ] || return 0
+  sed -n 's/^[[:space:]]*\[\([^]]*\)\][[:space:]]*$/\1/p' "$config"
+}
+
+# get_field INSTANCE FIELD: the value of FIELD in section INSTANCE (empty if absent).
+get_field() {
+  local want="$1" field="$2" section="" line k v
+  [ -f "$config" ] || return 0
+  while IFS= read -r line || [ -n "$line" ]; do
+    line="${line%%#*}"           # comments: a value cannot contain '#'
+    line="$(trim "$line")"
+    [ -z "$line" ] && continue
+    case "$line" in
+      \[*\]) section="${line#[}"; section="${section%]}"; continue ;;
+    esac
+    [ "$section" = "$want" ] || continue
+    case "$line" in *=*) ;; *) continue ;; esac
+    k="$(trim "${line%%=*}")"; v="$(trim "${line#*=}")"
+    if [ "$k" = "$field" ]; then printf '%s' "$v"; return 0; fi
+  done < "$config"
+}
+
+# Nearest .pod/app.json from the current directory upwards.
+find_app_json() {
+  local d="$PWD"
+  while :; do
+    [ -f "$d/.pod/app.json" ] && { printf '%s' "$d/.pod/app.json"; return 0; }
+    [ "$d" = "/" ] && return 1
+    d="$(dirname "$d")"
+  done
+}
+
+json_field() { sed -n "s/.*\"$2\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\)\".*/\\1/p" "$1" | head -n 1; }
+
+resolve_instance() {
+  local name="$1" app
+  if [ "$name" = "." ]; then
+    app="$(find_app_json)" || die 3 "no .pod/app.json here or above: name the instance"
+    name="$(json_field "$app" instance)"
+    [ -n "$name" ] || die 3 "$app has no \"instance\": name the instance"
+  fi
+  [ -f "$config" ] || die 3 "no instances file ($config): see the pod-cli skill to create one"
+  list_names | grep -qxF -- "$name" || die 3 "unknown instance '$name' in $config (podctx instances)"
+  printf '%s' "$name"
+}
+
+# Reads the instance's key into the variable POD_API_KEY (exported), without printing it.
+load_key() {
+  local name="$1" src
+  src="$(get_field "$name" key)"
+  [ -n "$src" ] || die 3 "instance '$name' has no key = … line"
+  case "$src" in
+    op://*)
+      local opcmd="${POD_OP:-op}"
+      command -v "$opcmd" >/dev/null 2>&1 || die 3 "'$opcmd' not found: install the 1Password CLI or set POD_OP"
+      POD_API_KEY="$("$opcmd" read -n "$src" 2>/dev/null)" \
+        || die 3 "cannot read the key of '$name' from 1Password ($opcmd read failed: locked app, missing item or no access)"
+      ;;
+    env:*)
+      local var="${src#env:}"
+      case "$var" in ''|*[!A-Za-z0-9_]*) die 3 "instance '$name': '$src' is not env:VARIABLE" ;; esac
+      POD_API_KEY="${!var:-}"
+      [ -n "$POD_API_KEY" ] || die 3 "instance '$name': \$$var is empty"
+      ;;
+    keychain:*)
+      command -v security >/dev/null 2>&1 || die 3 "keychain: only works on macOS"
+      POD_API_KEY="$(security find-generic-password -s "${src#keychain:}" -a "$USER" -w 2>/dev/null)" \
+        || die 3 "instance '$name': no keychain item '${src#keychain:}' for $USER"
+      ;;
+    pod_*) die 3 "instance '$name': the key is written in clear in $config; use op://, env: or keychain: instead" ;;
+    *) die 3 "instance '$name': unknown key source (op://…, env:VAR or keychain:SERVICE)" ;;
+  esac
+  case "$POD_API_KEY" in
+    pod_*) ;;
+    *) POD_API_KEY=""; die 3 "instance '$name': the value read is not a Pod API key (it should start with pod_)" ;;
+  esac
+  export POD_API_KEY
+}
+
+load_url() {
+  local name="$1"
+  POD_URL="$(get_field "$name" url)"
+  POD_URL="${POD_URL%/}"
+  [ -n "$POD_URL" ] || die 3 "instance '$name' has no url = … line"
+  export POD_URL
+}
+
+# Sets the array POD_CMD to the command that runs the pod CLI for this instance.
+pod_command() {
+  local name="$1" bin image
+  bin="${POD_BIN:-$(get_field "$name" bin)}"
+  if [ -n "$bin" ]; then POD_CMD=("$bin"); return 0; fi
+  # `pod` may be another tool (CocoaPods): accept it only if its help mentions POD_URL.
+  if command -v pod >/dev/null 2>&1 && pod help 2>&1 | grep -q POD_URL; then
+    POD_CMD=(pod); return 0
+  fi
+  image="$(get_field "$name" image)"
+  if [ -n "$image" ]; then
+    command -v docker >/dev/null 2>&1 || die 3 "instance '$name' sets image = $image but docker is not installed"
+    POD_CMD=(docker run --rm -i -e POD_URL -e POD_API_KEY -e POD_SERVICE -e POD_ALLOW_HTTP "$image")
+    return 0
+  fi
+  die 3 "no Pod CLI: put the pod binary in PATH, set POD_BIN, or add image = <pod image> to [$name]"
+}
+
+cmd_instances() {
+  [ -f "$config" ] || { echo "no instances file ($config)"; return 0; }
+  local n src kind
+  while IFS= read -r n; do
+    src="$(get_field "$n" key)"
+    case "$src" in
+      op://*) kind="1password" ;; env:*) kind="$src" ;; keychain:*) kind="keychain" ;;
+      pod_*) kind="IN CLEAR (refused)" ;; '') kind="none" ;; *) kind="unknown" ;;
+    esac
+    printf '%s\t%s\tkey: %s\n' "$n" "$(get_field "$n" url)" "$kind"
+  done < <(list_names)
+}
+
+cmd_here() {
+  local app; app="$(find_app_json)" || die 3 "no .pod/app.json here or above"
+  printf 'file\t%s\ninstance\t%s\nservice\t%s\napp\t%s\n' "$app" \
+    "$(json_field "$app" instance)" "$(json_field "$app" service)" "$(json_field "$app" app)"
+}
+
+# api METHOD PATH [FILE]
+cmd_api() {
+  [ $# -ge 2 ] && [ $# -le 3 ] || usage
+  local method path body
+  method="$(printf '%s' "$1" | tr '[:lower:]' '[:upper:]')"; path="$2"; body="${3:-}"
+  case "$method" in GET|POST|PUT|PATCH|DELETE) ;; *) die 2 "method must be GET, POST, PUT, PATCH or DELETE" ;; esac
+  case "$path" in
+    /api/v1/*|/llms.txt|/health|/ready) ;;
+    *) die 2 "path must start with /api/v1/ (the key is only ever sent to the instance's own URL)" ;;
+  esac
+  local args=(-sS --fail-with-body -X "$method" -H "Accept: application/json")
+  if [ -n "$body" ]; then
+    [ "$body" = "-" ] || [ -f "$body" ] || die 2 "no such file: $body"
+    args+=(-H "Content-Type: application/json" --data-binary "@$body")
+  fi
+  local rc=0
+  curl "${args[@]}" -H @<(printf 'Authorization: Bearer %s\n' "$POD_API_KEY") "$POD_URL$path" || rc=$?
+  echo
+  [ "$rc" -eq 0 ] || exit 1
+}
+
+main() {
+  [ $# -ge 1 ] || usage
+  case "$1" in
+    -h|--help|help) usage ;;
+    instances) cmd_instances; return ;;
+    here) cmd_here; return ;;
+  esac
+  local name; name="$(resolve_instance "$1")"; shift
+  # The service bound in .pod/app.json applies when it names this same instance.
+  if [ -z "${POD_SERVICE:-}" ]; then
+    local app; if app="$(find_app_json)" && [ "$(json_field "$app" instance)" = "$name" ]; then
+      local svc; svc="$(json_field "$app" service)"; [ -n "$svc" ] && export POD_SERVICE="$svc"
+    fi
+  fi
+  load_url "$name"
+  local sub="${1:-}"
+  case "$sub" in
+    '') usage ;;
+    api) shift; load_key "$name"; cmd_api "$@"; return ;;
+    check)
+      load_key "$name"
+      echo "instance: $name ($POD_URL)"
+      cmd_api GET /api/v1/version
+      cmd_api GET /api/v1/auth/me
+      return ;;
+    --) shift ;;
+  esac
+  [ $# -ge 1 ] || usage
+  pod_command "$name"
+  load_key "$name"
+  exec "${POD_CMD[@]}" "$@"
+}
+
+main "$@"
