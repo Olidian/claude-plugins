@@ -75,7 +75,12 @@ podctx acme version                    # warns if the CLI and server major.minor
 ```
 
 - A service is its UUID, `PROJECT/SERVICE`, or `ORG/PROJECT/SERVICE` if the project slug is
-  ambiguous. Services outside the default environment appear as `…@<env>` in `ls`: use their id.
+  ambiguous. Services outside the default environment appear as `…@<env>` in `ls`.
+- **Projects with several environments**: up to Pod 0.26, a CLI name does not carry the
+  environment, so a service name present in two environments (`shop/web` in production and
+  staging) is refused as ambiguous, the production one included. Use the service's id from
+  `ls`. Later CLIs take `shop/web@staging`, and `shop/web` means the default environment's
+  service: check with `podctx X version` (the client's version counts here, not the server's).
 - `--json` works only for `whoami`, `ls`, `status`, `deployments`, `env list`, `version`.
 - Exit status: 0 ok, 1 failure (failed deployment, API error, timeout: the deployment goes on in
   Pod), 2 usage error; `podctx` itself returns 3 when the instance, the key or the CLI is missing.
