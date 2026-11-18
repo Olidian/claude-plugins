@@ -6,10 +6,10 @@
     {
       "name": "pod",
       "source": "./plugins/pod",
-      "description": "Put what you build online on your Pod instance: deploy a ready-made image, prepare your code for a Git build, follow deployments, read logs, set environment variables, add a database or a domain.",
-      "version": "2.0.0",
+      "description": "Put what you build online on Pod and run it, on one or several Pod instances: deploy a ready-made image or a Git repository, follow deployments, read logs, set variables, add a database or a domain; podctx drives the pod CLI and the API per instance, with API keys kept in a password manager.",
+      "version": "2.1.0",
       "category": "deployment",
-      "keywords": ["deploy", "hosting", "paas", "docker", "pod"]
+      "keywords": ["deploy", "hosting", "paas", "docker", "pod", "cli", "multi-instance"]
     }
   ]
 }
